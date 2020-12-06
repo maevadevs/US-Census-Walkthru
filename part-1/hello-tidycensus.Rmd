@@ -1,0 +1,216 @@
+---
+title: "Hello Census"
+author: "maevadevs"
+date: "12/6/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Import and Setups
+
+Load the tidycensus package into your R session
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(dplyr)
+library(tidycensus)
+```
+
+Load all our helper functions: 
+- `get_key` is a custom function that allows to load the keys from `.env`
+- All env settings are stored in `.env` file
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+source('../helper-functions.R')
+envfile = "../.env"
+```
+
+Get the census api key from the file
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+api_key = get_key(envfile, "census_api_key")
+```
+
+Set Census API Key with `census_api_key()`: This is part of tidycensus
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+census_api_key(api_key)
+```
+
+We could check the API key value with the following
+
+```r
+print(Sys.getenv("CENSUS_API_KEY"))
+```
+
+---
+
+## Functions from `tidycensus`
+
+- `get_decennial()`: As default, return data from the 2010 US Census
+- `get_acs()`: As default, return data from 2012-2016 ACS. Grants access to the 1-year and 5-year American Community Survey APIs
+  - Access to the 1990 (SF1 and SF3) and 2000 (SF3) APIs has been suspended
+
+Obtain and view state populations from the 2010 US Census
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+state_pop <- get_decennial(geography = "state", variables = "P001001")
+state_pop %>% head
+```
+
+Obtain and view state median household income from the 2012-2016 American Community Survey (ACS)
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+state_income <- get_acs(geography = "state", variables = "B19013_001")
+state_income %>% head
+```
+
+- Census data comprise thousands of variables available across dozens of geographies
+  - Most are available through `tidycensus`
+  - But it helps to understand the options
+- Census Tract: Only available by state
+  - `tidycensus` can help to convert between state and county
+- `tidycensus` includes the Census variable ID in the variable column
+  - If a user want to supply their own variable name, this can be accomplished with a named vector
+
+Get an ACS dataset for Census tracts in Texas by setting the state
+
+- `B19013_001`: Median household income
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+tx_income <- get_acs(geography = "tract",
+                     variables = "B19013_001",
+                     state = "TX")
+tx_income %>% head
+```
+
+Get an ACS dataset for Census tracts in Texas/Travis County by setting the state and county
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+travis_income <- get_acs(geography="tract",
+                     variables="B19013_001",
+                     state="TX",
+                     county="Travis")
+travis_income %>% head
+```
+
+We can also set a better alias name for the variable using a vector
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+travis_income <- get_acs(geography="tract",
+                     variables=c(household_income="B19013_001"),
+                     state="TX",
+                     county="Travis")
+travis_income %>% head
+```
+
+- By default, tidycensus functions return tidy data frames
+- But we can change that to wide dataframe as well
+- This is useful when we want to analyze multiple variables
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+oregon_wide <- get_acs(geography="tract",
+                       state="OR",
+                       variables=c(hhincome = "B19013_001", medage="B01002_001"),
+                       output = "wide")
+oregon_wide %>% head
+```
+
+Create a scatterplot
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+plot(oregon_wide$hhincomeE, oregon_wide$medageE)
+```
+
+---
+
+## Searching for Data with `tidycensus`
+
+- To use `tidycensus` functions, user must supply a vector of census IDs
+
+### Searching for Census Variables
+
+- [Census Reporter](https://censusreporter.org/)
+- Built-in tidycensus variable searching: 
+
+### `load_variables(year, dataset, cache?)`
+
+- Return can be explored with `tidyverse`
+- Return columns:
+  - `name`: Census Variable ID
+  - `label`: Variable description for human-readable
+  - `concept`: General group to which the variable corresponds
+
+Load variables
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+v16 <- load_variables(year=2016,
+                      dataset='acs5', # or acs5/profile, sf3...
+                      cache=TRUE)
+v16 %>% head
+```
+
+Filter with `tidyverse`
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+B19001 <- v16 %>% filter(str_detect(name, "B19001"))
+B19001 %>% head
+```
+
+We can also filter by a different column
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Use public transportation to search for related variables
+public_trans <- v16 %>% filter(str_detect(label,
+                                  fixed("public transportation",
+                                        ignore_case = TRUE)))
+public_trans %>% head
+```
+
+### Typical Variable Format
+
+`[Table ID]_[Column Number]_[Row Number][Variable Type]`
+
+- The variable type is optional for `tidycensus`
+  - `tidycensus` returns both `E` (Estimate) and `M` (Margin of Error) by default
+  - Suffixes are only showing up when returning in wide-format
+
+---
+
+## Visualizing Census Data With `ggplot2`
+
+Median household income in Northeast from the 2016 ACS
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+ne_income_16 <- get_acs(geography="state",
+                        variables=c("B19013_001"),
+                        survey="acs1",
+                        state=c("ME","NH","VT","MA","RI","CT","NY"))
+ne_income_16 %>% head
+```
+
+Now, we can plot the data using ggplot2
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+ne_income_16 %>% 
+  ggplot(aes(
+    x=estimate,
+    y=reorder(NAME, estimate) # Reorder y in the increasing of x
+  )) + 
+  geom_point(color="navy", size=4) +
+  scale_x_continuous(labels=scales::dollar) +
+  theme_minimal(base_size=14) +
+  labs(x="2016 ACS Estimate",
+       y="",
+       title="Median Household Income By State")
+```
+
+
+
+
+
+
+
